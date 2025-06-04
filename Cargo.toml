@@ -1,0 +1,22 @@
+[package]
+name = "tls2httpconnect"
+description = "Listens for incoming TLS handshakes and issues HTTP CONNECT to an upstream proxy to relay the connection"
+keywords = ["proxy", "tls", "https", "nat"]
+categories = ["network-programming"]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/withings/tls2httpconnect"
+
+[dependencies]
+async-http-proxy = { version = "1.2", features = ["runtime-tokio"] }
+clap = { version = "4.5", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+snafu = "0.8"
+tls-parser = "0.12"
+tokio = { version = "1", features = ["rt", "io-util", "net", "time", "macros", "sync", "signal", "parking_lot"] }
+
+[profile.release]
+strip = true
