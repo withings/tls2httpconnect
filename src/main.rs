@@ -19,7 +19,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use async_http_proxy::{HttpError, http_connect_tokio};
 use clap::Parser;
 use tls_parser::{TlsExtension, TlsMessage, TlsMessageHandshake, TlsRecordType};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use snafu::prelude::*;
 
@@ -49,13 +48,13 @@ struct Cli {
 #[derive(Debug, Snafu)]
 /// Generic error enum for everything that can go wrong
 enum RelayError {
-    #[snafu(display("failed to set up the listening socket"))]
+    #[snafu(display("failed to set up the listening socket: {source}"))]
     Bind { source: std::io::Error },
 
-    #[snafu(display("failed to accept an incoming connection"))]
+    #[snafu(display("failed to accept an incoming connection: {source}"))]
     Incoming { source: std::io::Error },
 
-    #[snafu(display("I/O error with the client"))]
+    #[snafu(display("I/O error with the client: {source}"))]
     ClientIO { source: std::io::Error },
 
     #[snafu(display("the client sent an incomplete TLS header, got {header_bytes_read} byte(s)"))]
@@ -67,8 +66,8 @@ enum RelayError {
     #[snafu(display("the client did not start with a TLS handshake"))]
     NoHandshake,
 
-    #[snafu(display("the client sent an incomplete TLS record"))]
-    IncompleteTlsRecord,
+    #[snafu(display("the client sent an incomplete TLS record, got {record_bytes_read} byte(s)"))]
+    IncompleteTlsRecord { record_bytes_read: usize },
 
     #[snafu(display("the client sent an invalid TLS record"))]
     InvalidTlsRecord,
@@ -140,13 +139,13 @@ async fn peek_sni(client_stream: &TcpStream) -> Result<String, RelayError> {
     }
 
     /* Peek at the entire ClientHello record */
-    let client_hello_length: usize = TLS_HEADER_SIZE + (tls_header.len as usize);
-    let mut client_hello_bytes = vec![0; client_hello_length];
-    let client_hello_bytes_read = client_stream.peek(&mut client_hello_bytes).await.context(ClientIOSnafu)?;
-    ensure!(client_hello_bytes_read == client_hello_length, IncompleteTlsRecordSnafu);
+    let record_length: usize = TLS_HEADER_SIZE + (tls_header.len as usize);
+    let mut record_bytes = vec![0; record_length];
+    let record_bytes_read = client_stream.peek(&mut record_bytes).await.context(ClientIOSnafu)?;
+    ensure!(record_bytes_read == record_length, IncompleteTlsRecordSnafu { record_bytes_read });
 
     /* Parse the ClientHello record, expect a handshake */
-    let (_, tls_record) = tls_parser::parse_tls_plaintext(&client_hello_bytes)
+    let (_, tls_record) = tls_parser::parse_tls_plaintext(&record_bytes)
         .map_err(|_| InvalidTlsRecordSnafu.build())?;
     let client_hello = tls_record.msg.iter().filter_map(|msg| match msg {
         TlsMessage::Handshake(TlsMessageHandshake::ClientHello(ch)) => Some(ch),
@@ -180,38 +179,8 @@ async fn run_http_connect_tunnel(
     let mut proxy_stream = TcpStream::connect((proxy_addr, proxy_port)).await.context(ProxyIOSnafu)?;
     http_connect_tokio(&mut proxy_stream, &server_name, target_port).await.context(HttpConnectSnafu)?;
 
-    let (mut client_read, mut client_write) = client_stream.split();
-    let (mut proxy_read, mut proxy_write) = proxy_stream.split();
-    let mut client_buffer = vec![0 as u8; buffer_size];
-    let mut proxy_buffer = vec![0 as u8; buffer_size];
-
-    /* Simply relay TCP between client and proxy */
-    loop {
-        tokio::select! {
-            client_bytes_read = client_read.read(&mut client_buffer) => {
-                match client_bytes_read {
-                    Ok(n) => {
-                        if let Err(_) = proxy_write.write(&client_buffer[..n]).await {
-                            break;
-                        }
-                    },
-                    Err(_) => break
-                }
-            },
-            proxy_bytes_read = proxy_read.read(&mut proxy_buffer) => {
-                match proxy_bytes_read {
-                    Ok(n) => {
-                        if let Err(_) = client_write.write(&proxy_buffer[..n]).await {
-                            break;
-                        }
-                    },
-                    Err(_) => break
-                }
-            }
-        }
-    }
-
-    client_write.shutdown().await.ok();
-    proxy_write.shutdown().await.ok();
-    Ok(())
+    /* Set up bidirectional copy between the client and the proxy */
+    tokio::io::copy_bidirectional_with_sizes(&mut client_stream, &mut proxy_stream, buffer_size, buffer_size).await
+        .map(|_| ())
+        .context(ProxyIOSnafu)
 }
