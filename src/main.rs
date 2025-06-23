@@ -91,7 +91,7 @@ enum RelayError {
     HttpConnect { source: HttpError },
 }
 
-#[tokio::main(flavor="current_thread")]
+#[tokio::main]
 #[snafu::report]
 async fn main() -> Result<(), RelayError> {
     env_logger::init();
