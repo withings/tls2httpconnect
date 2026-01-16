@@ -1,0 +1,36 @@
+name: tls2httpconnect release build
+on: [push]
+jobs:
+
+  build:
+    runs-on: ubuntu-slim
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup build cache
+        id: rust-cache
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-cache
+          path: |
+            ~/.cargo/
+            ~/.rustup/
+            ~/.local/
+
+      - if: ${{ steps.rust-cache.outputs.cache-hit != 'true' }}
+        name: Install Rust toolkit
+        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal -t x86_64-unknown-linux-musl
+
+      - name: Update Rust toolkit
+        run: ~/.cargo/bin/rustup update
+
+      - name: Build tls2httpconnect
+        run: ~/.cargo/bin/cargo build --release --target x86_64-unknown-linux-musl
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tls2httpconnect
+          path: target/x86_64-unknown-linux-musl/release/tls2httpconnect
