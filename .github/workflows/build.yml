@@ -27,10 +27,12 @@ jobs:
         run: ~/.cargo/bin/rustup update
 
       - name: Build tls2httpconnect
-        run: ~/.cargo/bin/cargo build --release --target x86_64-unknown-linux-musl
+        run: |
+          ~/.cargo/bin/cargo build --release --target x86_64-unknown-linux-musl
+          tar -cf tls2httpconnect.tar -C target/x86_64-unknown-linux-musl/release/ tls2httpconnect ../../../{deploy.sh,README.md,LICENSE.txt}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: tls2httpconnect
-          path: target/x86_64-unknown-linux-musl/release/tls2httpconnect
+          path: tls2httpconnect.tar
